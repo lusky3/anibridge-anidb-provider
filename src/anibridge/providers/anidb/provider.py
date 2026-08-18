@@ -474,8 +474,16 @@ class AnidbProvider(
                     error=f"Invalid lid key: {write.key!r}",
                     token=write.token,
                 )
-            await self._client.delete_mylist_entry(lid=lid)
-            return WriteResult(ok=True, op=WriteOp.DELETE_RECORD, token=write.token)
+            deleted = await self._client.delete_mylist_entry(lid=lid)
+            if deleted:
+                return WriteResult(ok=True, op=WriteOp.DELETE_RECORD, token=write.token)
+            return WriteResult(
+                ok=False,
+                op=WriteOp.DELETE_RECORD,
+                code=WriteError.TRANSIENT,
+                error="delete_mylist_entry returned False",
+                token=write.token,
+            )
 
         if write.ref is not None:
             try:
@@ -492,8 +500,16 @@ class AnidbProvider(
             if entry is None:
                 # Not in list — treat as no-op success
                 return WriteResult(ok=True, op=WriteOp.DELETE_RECORD, token=write.token)
-            await self._client.delete_mylist_entry(lid=entry.lid)
-            return WriteResult(ok=True, op=WriteOp.DELETE_RECORD, token=write.token)
+            deleted = await self._client.delete_mylist_entry(lid=entry.lid)
+            if deleted:
+                return WriteResult(ok=True, op=WriteOp.DELETE_RECORD, token=write.token)
+            return WriteResult(
+                ok=False,
+                op=WriteOp.DELETE_RECORD,
+                code=WriteError.TRANSIENT,
+                error="delete_mylist_entry returned False",
+                token=write.token,
+            )
 
         return WriteResult(
             ok=False,

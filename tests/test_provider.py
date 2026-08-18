@@ -483,6 +483,38 @@ async def test_write_records_delete_by_key_uses_lid_directly():
 
 
 @pytest.mark.asyncio
+async def test_write_records_delete_by_ref_reports_failure():
+    """DeleteRecord by ref reports ok=False when delete_mylist_entry fails.
+
+    Regression test: the delete path used to discard delete_mylist_entry's
+    return value entirely and always report ok=True, masking real failures
+    as success.
+    """
+    provider, mock_client = _make_provider()
+    mock_client.get_mylist_entry.return_value = _make_mylist_entry(lid=99)
+    mock_client.delete_mylist_entry.return_value = False
+
+    write = DeleteRecord(ref=Ref.anchor("1234"), surface=_SURFACE)
+    results = await provider.write_records([write])
+
+    assert results[0].ok is False
+    assert results[0].code == WriteError.TRANSIENT
+
+
+@pytest.mark.asyncio
+async def test_write_records_delete_by_key_reports_failure():
+    """DeleteRecord by key (lid) reports ok=False when delete_mylist_entry fails."""
+    provider, mock_client = _make_provider()
+    mock_client.delete_mylist_entry.return_value = False
+
+    write = DeleteRecord(key="42")
+    results = await provider.write_records([write])
+
+    assert results[0].ok is False
+    assert results[0].code == WriteError.TRANSIENT
+
+
+@pytest.mark.asyncio
 async def test_write_records_delete_op_is_delete_record():
     """DeleteRecord result carries the DELETE_RECORD op."""
     provider, mock_client = _make_provider()
