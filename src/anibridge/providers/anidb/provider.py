@@ -20,6 +20,7 @@ would break sync pipelines that legitimately set these statuses.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Mapping, Sequence
 
@@ -36,8 +37,8 @@ from anibridge.provider.base import (
     Node,
     NodeFlag,
     NodeKind,
-    NodeSpec,
     NodeQuery,
+    NodeSpec,
     Page,
     Provider,
     Record,
@@ -47,14 +48,14 @@ from anibridge.provider.base import (
     RecordWrite,
     Ref,
     Role,
+    ScanItem,
+    ScanQuery,
     State,
     Status,
     SupportsMapping,
     SupportsNodeReads,
     SupportsRecordReads,
     SupportsRecordWrites,
-    ScanItem,
-    ScanQuery,
     SupportsScan,
     Titles,
     UpsertRecord,
@@ -62,6 +63,7 @@ from anibridge.provider.base import (
     WriteOp,
     WriteResult,
 )
+
 from anibridge.providers.anidb.config import AnidbProviderConfig
 from anibridge.providers.anidb.models import AnimeInfo, MylistEntry, MylistStatus
 from anibridge.providers.anidb.udp_client import AnidbUdpClient
@@ -191,9 +193,7 @@ class AnidbProvider(
         cfg_dict = dict(config or {})
         import msgspec  # noqa: PLC0415
 
-        self._cfg: AnidbProviderConfig = msgspec.convert(
-            cfg_dict, AnidbProviderConfig
-        )
+        self._cfg: AnidbProviderConfig = msgspec.convert(cfg_dict, AnidbProviderConfig)
         self._client = AnidbUdpClient(
             username=self._cfg.username,
             password=self._cfg.password,
@@ -277,12 +277,11 @@ class AnidbProvider(
         Returns:
             Sequence of Match objects for resolved descriptors.
         """
-        matches: list[Match] = []
-        for eid in ids:
-            if eid.authority == "anidb" and eid.value.isdigit():
-                matches.append(
-                    Match(external_id=eid, ref=Ref.anchor(eid.value), confidence=1.0)
-                )
+        matches: list[Match] = [
+            Match(external_id=eid, ref=Ref.anchor(eid.value), confidence=1.0)
+            for eid in ids
+            if eid.authority == "anidb" and eid.value.isdigit()
+        ]
         return matches
 
     # ------------------------------------------------------------------
@@ -420,7 +419,7 @@ class AnidbProvider(
         """
         try:
             aid = int(write.ref.key)
-        except (ValueError, AttributeError):
+        except ValueError, AttributeError:
             return WriteResult(
                 ok=False,
                 op=WriteOp.UPSERT_RECORD,
@@ -435,10 +434,8 @@ class AnidbProvider(
         if isinstance(status_value, State):
             status = status_value.status
         elif isinstance(status_value, str):
-            try:
+            with contextlib.suppress(ValueError):
                 status = Status(status_value)
-            except ValueError:
-                pass
 
         state_int, viewed = _status_to_mylist(status)
         ok = await self._client.add_or_update_mylist_entry(
@@ -487,7 +484,7 @@ class AnidbProvider(
         if write.ref is not None:
             try:
                 aid = int(write.ref.key)
-            except (ValueError, AttributeError):
+            except ValueError, AttributeError:
                 return WriteResult(
                     ok=False,
                     op=WriteOp.DELETE_RECORD,
@@ -498,9 +495,7 @@ class AnidbProvider(
             entry = await self._client.get_mylist_entry(aid=aid)
             if entry is None:
                 # Not in list — treat as no-op success
-                return WriteResult(
-                    ok=True, op=WriteOp.DELETE_RECORD, token=write.token
-                )
+                return WriteResult(ok=True, op=WriteOp.DELETE_RECORD, token=write.token)
             await self._client.delete_mylist_entry(lid=entry.lid)
             return WriteResult(ok=True, op=WriteOp.DELETE_RECORD, token=write.token)
 
@@ -541,6 +536,4 @@ class AnidbProvider(
             NotImplementedError: Always.  Use ``scan()`` for partial iteration
                 support when it becomes available.
         """
-        raise NotImplementedError(
-            "backup_list is not supported by the AniDB UDP API."
-        )
+        raise NotImplementedError("backup_list is not supported by the AniDB UDP API.")

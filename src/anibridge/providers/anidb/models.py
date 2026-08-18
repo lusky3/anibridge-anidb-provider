@@ -90,7 +90,9 @@ class MylistEntry:
             aid=int(parts[3]),
             gid=int(parts[4]),
             state=MylistStatus.from_int(int(parts[6])),
-            viewdate=int(parts[7]) if len(parts) > 7 and parts[7].strip().isdigit() else 0,
+            viewdate=int(parts[7])
+            if len(parts) > 7 and parts[7].strip().isdigit()
+            else 0,
         )
 
 
@@ -122,7 +124,7 @@ class AnimeInfo:
         if len(parts) < 5:
             raise ValueError(f"Malformed ANIME response: {resp.body!r}")
         aid = int(parts[0])
-        romaji = parts[4].strip() if parts[4].strip() else None
+        romaji = parts[4].strip() or None
         english = parts[6].strip() if len(parts) > 6 and parts[6].strip() else None
         title = romaji or english or f"AID:{aid}"
         episodes: int | None = None

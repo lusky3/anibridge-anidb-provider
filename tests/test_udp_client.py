@@ -1,8 +1,19 @@
 """Tests for the AniDB async UDP client."""
+
 import asyncio
+import logging
+import sys
+import time
 import unittest.mock
+
 import pytest
-from anibridge.providers.anidb.udp_client import AnidbUdpClient, AnidbAuthError
+
+from anibridge.providers.anidb import udp_client as _udp_client_mod
+from anibridge.providers.anidb.udp_client import (
+    AnidbAuthError,
+    AnidbUdpClient,
+    _UdpProtocol,
+)
 
 
 def _make_client():
@@ -45,10 +56,12 @@ async def test_authenticate_rejected_raises(mock_udp_responses):
 
 @pytest.mark.asyncio
 async def test_get_mylist_entry_returns_none_on_321(mock_udp_responses):
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"321 NO SUCH ENTRY\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"321 NO SUCH ENTRY\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     result = await client.get_mylist_entry(aid=9999)
@@ -57,10 +70,12 @@ async def test_get_mylist_entry_returns_none_on_321(mock_udp_responses):
 
 @pytest.mark.asyncio
 async def test_get_mylist_entry_parses_221(mock_udp_responses):
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"221 42|0|0|1234|0|0|1|1700000000|||\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"221 42|0|0|1234|0|0|1|1700000000|||\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     entry = await client.get_mylist_entry(aid=1234)
@@ -71,10 +86,12 @@ async def test_get_mylist_entry_parses_221(mock_udp_responses):
 
 @pytest.mark.asyncio
 async def test_get_mylist_entry_returns_none_on_unexpected_code(mock_udp_responses):
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"999 UNKNOWN\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"999 UNKNOWN\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     result = await client.get_mylist_entry(aid=1234)
@@ -83,10 +100,12 @@ async def test_get_mylist_entry_returns_none_on_unexpected_code(mock_udp_respons
 
 @pytest.mark.asyncio
 async def test_add_or_update_returns_true_on_210(mock_udp_responses):
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"210 MYLIST ENTRY ADDED\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"210 MYLIST ENTRY ADDED\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     ok = await client.add_or_update_mylist_entry(aid=1234, state=1, viewed=False)
@@ -95,10 +114,12 @@ async def test_add_or_update_returns_true_on_210(mock_udp_responses):
 
 @pytest.mark.asyncio
 async def test_add_or_update_returns_true_on_310(mock_udp_responses):
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"310 MYLIST ENTRY EDITED\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"310 MYLIST ENTRY EDITED\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     ok = await client.add_or_update_mylist_entry(aid=1234, state=1, viewed=True)
@@ -107,10 +128,12 @@ async def test_add_or_update_returns_true_on_310(mock_udp_responses):
 
 @pytest.mark.asyncio
 async def test_add_or_update_returns_false_on_unexpected(mock_udp_responses):
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"500 ERROR\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"500 ERROR\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     ok = await client.add_or_update_mylist_entry(aid=1234, state=1, viewed=False)
@@ -119,10 +142,12 @@ async def test_add_or_update_returns_false_on_unexpected(mock_udp_responses):
 
 @pytest.mark.asyncio
 async def test_delete_mylist_entry_returns_true_on_211(mock_udp_responses):
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"211 DELETED\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"211 DELETED\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     ok = await client.delete_mylist_entry(lid=42)
@@ -131,10 +156,12 @@ async def test_delete_mylist_entry_returns_true_on_211(mock_udp_responses):
 
 @pytest.mark.asyncio
 async def test_delete_mylist_entry_returns_false_on_321(mock_udp_responses):
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"321 NO SUCH ENTRY\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"321 NO SUCH ENTRY\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     ok = await client.delete_mylist_entry(lid=99999)
@@ -143,10 +170,12 @@ async def test_delete_mylist_entry_returns_false_on_321(mock_udp_responses):
 
 @pytest.mark.asyncio
 async def test_get_anime_info_parses_243(mock_udp_responses):
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"243 1234|0|2023|TV Series|Cowboy Bebop|||26\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"243 1234|0|2023|TV Series|Cowboy Bebop|||26\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     info = await client.get_anime_info(aid=1234)
@@ -157,10 +186,12 @@ async def test_get_anime_info_parses_243(mock_udp_responses):
 
 @pytest.mark.asyncio
 async def test_get_anime_info_returns_none_on_unknown_aid(mock_udp_responses):
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"330 NO SUCH ANIME\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"330 NO SUCH ANIME\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     info = await client.get_anime_info(aid=99999)
@@ -170,11 +201,13 @@ async def test_get_anime_info_returns_none_on_unknown_aid(mock_udp_responses):
 @pytest.mark.asyncio
 async def test_get_anime_info_uses_cache(mock_udp_responses):
     """Second call for same AID must not send another UDP request."""
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"243 1234|0|2023|TV|Bebop|||26\n",
-        # No second response queued — a second UDP call would raise RuntimeError
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"243 1234|0|2023|TV|Bebop|||26\n",
+            # No second response queued — a second UDP call would raise RuntimeError
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     info1 = await client.get_anime_info(aid=1234)
@@ -185,9 +218,11 @@ async def test_get_anime_info_uses_cache(mock_udp_responses):
 @pytest.mark.asyncio
 async def test_ensure_authenticated_when_not_authed(mock_udp_responses):
     """_ensure_authenticated triggers login when not yet authenticated."""
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+        ]
+    )
     client = _make_client()
     assert not client._authenticated
     await client._ensure_authenticated()
@@ -197,11 +232,12 @@ async def test_ensure_authenticated_when_not_authed(mock_udp_responses):
 @pytest.mark.asyncio
 async def test_ensure_authenticated_reauths_on_expired_session(mock_udp_responses):
     """_ensure_authenticated re-logs in when session age exceeds TTL."""
-    import time
-    mock_udp_responses.extend([
-        b"200 first LOGIN ACCEPTED\n",
-        b"200 second LOGIN ACCEPTED\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 first LOGIN ACCEPTED\n",
+            b"200 second LOGIN ACCEPTED\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     assert client._session == "first"
@@ -213,10 +249,12 @@ async def test_ensure_authenticated_reauths_on_expired_session(mock_udp_response
 
 @pytest.mark.asyncio
 async def test_clear_cache_empties_anime_cache(mock_udp_responses):
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"243 1234|0|2023|TV|Bebop|||26\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"243 1234|0|2023|TV|Bebop|||26\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     await client.get_anime_info(aid=1234)
@@ -229,13 +267,16 @@ async def test_clear_cache_empties_anime_cache(mock_udp_responses):
 # Additional tests to reach >= 80% coverage on udp_client.py
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_delete_mylist_entry_returns_false_on_unexpected_code(mock_udp_responses):
     """delete_mylist_entry logs warning and returns False on unexpected code."""
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"500 INTERNAL ERROR\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"500 INTERNAL ERROR\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     ok = await client.delete_mylist_entry(lid=42)
@@ -261,7 +302,7 @@ async def test_authenticate_with_nat_flag(mock_udp_responses):
 
 @pytest.mark.asyncio
 async def test_authenticate_with_encrypt_key(mock_udp_responses):
-    """AUTH command includes encrypt param and sets cipher key when encrypt= provided."""
+    """AUTH command includes encrypt param and sets cipher key when encrypt= set."""
     mock_udp_responses.extend([b"200 sess LOGIN ACCEPTED\n"])
     client = AnidbUdpClient(
         username="user",
@@ -282,10 +323,12 @@ async def test_authenticate_with_encrypt_key(mock_udp_responses):
 @pytest.mark.asyncio
 async def test_close_when_authenticated(mock_udp_responses):
     """close() sends LOGOUT and resets state when authenticated."""
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"203 LOGGED OUT\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"203 LOGGED OUT\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     assert client._authenticated is True
@@ -306,10 +349,12 @@ async def test_close_when_not_authenticated():
 @pytest.mark.asyncio
 async def test_close_with_transport(mock_udp_responses):
     """close() closes the transport if one is set."""
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"203 LOGGED OUT\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"203 LOGGED OUT\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     # Set a mock transport
@@ -322,17 +367,18 @@ async def test_close_with_transport(mock_udp_responses):
 @pytest.mark.asyncio
 async def test_send_command_respects_rate_limit(mock_udp_responses):
     """_send_command waits when called before min_interval has elapsed."""
-    import time as time_module
-    mock_udp_responses.extend([
-        b"200 sess LOGIN ACCEPTED\n",
-        b"221 42|0|0|1234|0|0|1|1700000000|||\n",
-    ])
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"221 42|0|0|1234|0|0|1|1700000000|||\n",
+        ]
+    )
     client = _make_client()
     await client._authenticate()
     # Set a very short (but > 0) min_interval
     client._min_interval = 0.01
     # Set last request time to now so sleep will be triggered
-    client._last_request_time = time_module.monotonic()
+    client._last_request_time = time.monotonic()
     # This should sleep ~0.01s and then call _send_raw
     result = await client.get_mylist_entry(aid=1234)
     assert result is not None
@@ -340,8 +386,6 @@ async def test_send_command_respects_rate_limit(mock_udp_responses):
 
 def test_udp_protocol_datagram_received():
     """_UdpProtocol.datagram_received puts data into the queue."""
-    from anibridge.providers.anidb.udp_client import _UdpProtocol
-    import asyncio
     queue: asyncio.Queue[bytes] = asyncio.Queue()
     proto = _UdpProtocol(queue)
     proto.datagram_received(b"hello", ("127.0.0.1", 9000))
@@ -350,9 +394,6 @@ def test_udp_protocol_datagram_received():
 
 def test_udp_protocol_error_received(caplog):
     """_UdpProtocol.error_received logs a warning."""
-    import logging
-    from anibridge.providers.anidb.udp_client import _UdpProtocol
-    import asyncio
     queue: asyncio.Queue[bytes] = asyncio.Queue()
     proto = _UdpProtocol(queue)
     with caplog.at_level(logging.WARNING):
@@ -370,13 +411,6 @@ async def test_send_raw_raises_without_transport():
 
 def test_aes_encrypt_import_error_fallback(monkeypatch):
     """_aes128_ecb_encrypt returns data unchanged when pycryptodome is missing."""
-    import sys
-    import importlib
-    from anibridge.providers.anidb import udp_client as mod
-
-    # Simulate ImportError by temporarily hiding Crypto
-    real_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else None
-
     original_modules = sys.modules.copy()
     # Remove Crypto from sys.modules to force ImportError path
     for key in list(sys.modules.keys()):
@@ -385,8 +419,8 @@ def test_aes_encrypt_import_error_fallback(monkeypatch):
 
     try:
         data = b"some data to encrypt"
-        key = b"\x00" * 16
-        result = mod._aes128_ecb_encrypt(data, key)
+        enc_key = b"\x00" * 16
+        result = _udp_client_mod._aes128_ecb_encrypt(data, enc_key)
         # Without pycryptodome, returns original data unchanged
         assert result == data
     finally:
@@ -401,9 +435,6 @@ def test_aes_encrypt_import_error_fallback(monkeypatch):
 
 def test_aes_decrypt_import_error_fallback():
     """_aes128_ecb_decrypt returns data unchanged when pycryptodome is missing."""
-    import sys
-    from anibridge.providers.anidb import udp_client as mod
-
     original_modules = sys.modules.copy()
     for key in list(sys.modules.keys()):
         if key.startswith("Crypto"):
@@ -411,8 +442,8 @@ def test_aes_decrypt_import_error_fallback():
 
     try:
         data = b"some encrypted data"
-        key = b"\x00" * 16
-        result = mod._aes128_ecb_decrypt(data, key)
+        dec_key = b"\x00" * 16
+        result = _udp_client_mod._aes128_ecb_decrypt(data, dec_key)
         assert result == data
     finally:
         for key in list(sys.modules.keys()):

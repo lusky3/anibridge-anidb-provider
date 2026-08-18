@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from anibridge.provider.base import (
     Account,
     DeleteRecord,
     ExternalId,
     Match,
+    NodeQuery,
     RecordField,
+    RecordQuery,
     Ref,
+    Role,
+    ScanQuery,
     State,
     Status,
     SupportsMapping,
@@ -26,14 +28,14 @@ from anibridge.provider.base import (
     WriteError,
     WriteOp,
 )
+
 from anibridge.providers.anidb.models import AnimeInfo, MylistEntry, MylistStatus
 from anibridge.providers.anidb.provider import (
-    AnidbProvider,
     _SURFACE,
+    AnidbProvider,
     _mylist_to_status,
     _status_to_mylist,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,9 +55,9 @@ def _make_provider() -> tuple[AnidbProvider, MagicMock]:
     with patch(
         "anibridge.providers.anidb.provider.AnidbUdpClient",
         autospec=True,
-    ) as MockClient:
+    ) as mock_client_cls:
         provider = AnidbProvider(logger=logger, config=_BASE_CONFIG)
-        mock_client = MockClient.return_value
+        mock_client = mock_client_cls.return_value
         # Make async methods return sensible defaults
         mock_client.open = AsyncMock()
         mock_client.close = AsyncMock()
@@ -210,8 +212,8 @@ def test_account_returns_none_before_initialize():
 
 @pytest.mark.asyncio
 async def test_account_returns_correct_account_after_initialize():
-    """user() equivalent: account() returns Account with username as key and title."""
-    provider, mock_client = _make_provider()
+    """account() returns Account with username as key and title."""
+    provider, _ = _make_provider()
     await provider.initialize()
     acc = provider.account()
     assert acc is not None
@@ -232,8 +234,6 @@ async def test_fetch_records_returns_empty_when_not_in_mylist():
     mock_client.get_mylist_entry.return_value = None
     mock_client.get_anime_info.return_value = None
 
-    from anibridge.provider.base import RecordQuery
-
     result = await provider.fetch_records(RecordQuery(keys=("1234",)))
     assert result.items == ()
 
@@ -245,8 +245,6 @@ async def test_fetch_records_maps_viewdate_to_completed():
     entry = _make_mylist_entry(viewdate=1_700_000_000)
     mock_client.get_mylist_entry.return_value = entry
     mock_client.get_anime_info.return_value = _make_anime_info()
-
-    from anibridge.provider.base import RecordQuery
 
     result = await provider.fetch_records(RecordQuery(keys=("1234",)))
     assert len(result.items) == 1
@@ -264,8 +262,6 @@ async def test_fetch_records_maps_hdd_no_viewdate_to_active():
     mock_client.get_mylist_entry.return_value = entry
     mock_client.get_anime_info.return_value = _make_anime_info()
 
-    from anibridge.provider.base import RecordQuery
-
     result = await provider.fetch_records(RecordQuery(keys=("1234",)))
     assert len(result.items) == 1
     state = result.items[0].values[RecordField.STATUS]
@@ -280,8 +276,6 @@ async def test_fetch_records_maps_deleted_to_dropped():
     entry = _make_mylist_entry(state=MylistStatus.DELETED, viewdate=0)
     mock_client.get_mylist_entry.return_value = entry
     mock_client.get_anime_info.return_value = _make_anime_info()
-
-    from anibridge.provider.base import RecordQuery
 
     result = await provider.fetch_records(RecordQuery(keys=("1234",)))
     assert len(result.items) == 1
@@ -307,8 +301,6 @@ async def test_fetch_records_uses_concurrent_gather():
     mock_client.get_mylist_entry.side_effect = fake_mylist
     mock_client.get_anime_info.side_effect = fake_anime
 
-    from anibridge.provider.base import RecordQuery
-
     result = await provider.fetch_records(RecordQuery(keys=("1234",)))
     assert len(result.items) == 1
     # Both methods must have been called
@@ -323,8 +315,6 @@ async def test_fetch_records_record_has_correct_surface():
     mock_client.get_mylist_entry.return_value = _make_mylist_entry()
     mock_client.get_anime_info.return_value = _make_anime_info()
 
-    from anibridge.provider.base import RecordQuery
-
     result = await provider.fetch_records(RecordQuery(keys=("1234",)))
     assert result.items[0].surface == _SURFACE
 
@@ -335,8 +325,6 @@ async def test_fetch_records_record_key_is_lid():
     provider, mock_client = _make_provider()
     mock_client.get_mylist_entry.return_value = _make_mylist_entry(lid=42)
     mock_client.get_anime_info.return_value = _make_anime_info()
-
-    from anibridge.provider.base import RecordQuery
 
     result = await provider.fetch_records(RecordQuery(keys=("1234",)))
     assert result.items[0].key == "42"
@@ -368,7 +356,7 @@ async def test_write_records_upsert_completed_calls_viewed_true():
 
 @pytest.mark.asyncio
 async def test_write_records_upsert_planned_calls_state_0_viewed_false():
-    """UpsertRecord with PLANNED status calls add_or_update with state=0, viewed=False."""
+    """UpsertRecord with PLANNED status maps to state=0, viewed=False."""
     provider, mock_client = _make_provider()
 
     write = UpsertRecord(
@@ -439,7 +427,7 @@ async def test_write_records_upsert_returns_transient_on_client_false():
 @pytest.mark.asyncio
 async def test_write_records_upsert_op_is_upsert_record():
     """UpsertRecord result carries the UPSERT_RECORD op."""
-    provider, mock_client = _make_provider()
+    provider, _ = _make_provider()
     write = UpsertRecord(
         ref=Ref.anchor("1234"),
         surface=_SURFACE,
@@ -456,7 +444,7 @@ async def test_write_records_upsert_op_is_upsert_record():
 
 @pytest.mark.asyncio
 async def test_write_records_delete_by_ref_looks_up_lid_and_deletes():
-    """DeleteRecord by ref fetches the lid from MyList then calls delete_mylist_entry."""
+    """DeleteRecord by ref looks up the lid from MyList then deletes it."""
     provider, mock_client = _make_provider()
     entry = _make_mylist_entry(lid=99)
     mock_client.get_mylist_entry.return_value = entry
@@ -513,7 +501,7 @@ async def test_write_records_delete_op_is_delete_record():
 
 @pytest.mark.asyncio
 async def test_resolve_returns_match_for_anidb_numeric_ids():
-    """resolve() returns a Match for each descriptor with authority=anidb and numeric value."""
+    """resolve() returns a Match for anidb descriptors with numeric values."""
     provider, _ = _make_provider()
 
     ids = [
@@ -581,8 +569,6 @@ async def test_resolve_match_has_full_confidence():
 @pytest.mark.asyncio
 async def test_scan_returns_empty_page():
     """scan() returns an empty Page (AniDB UDP has no bulk export)."""
-    from anibridge.provider.base import ScanQuery
-
     provider, _ = _make_provider()
     result = await provider.scan(ScanQuery())
     assert result.items == ()
@@ -597,9 +583,9 @@ async def test_scan_returns_empty_page():
 async def test_fetch_nodes_returns_node_with_anime_title():
     """fetch_nodes() returns a Node with the anime title when AnimeInfo is available."""
     provider, mock_client = _make_provider()
-    mock_client.get_anime_info.return_value = _make_anime_info(title="Neon Genesis Evangelion")
-
-    from anibridge.provider.base import NodeQuery
+    mock_client.get_anime_info.return_value = _make_anime_info(
+        title="Neon Genesis Evangelion"
+    )
 
     result = await provider.fetch_nodes(NodeQuery(keys=("1234",)))
     assert len(result.items) == 1
@@ -613,8 +599,6 @@ async def test_fetch_nodes_fallback_title_when_no_anime_info():
     """fetch_nodes() returns AID:key as title when AnimeInfo is None."""
     provider, mock_client = _make_provider()
     mock_client.get_anime_info.return_value = None
-
-    from anibridge.provider.base import NodeQuery
 
     result = await provider.fetch_nodes(NodeQuery(keys=("9999",)))
     assert len(result.items) == 1
@@ -640,8 +624,6 @@ def test_capabilities_advertises_record_surface():
 
 
 def test_capabilities_has_both_roles():
-    from anibridge.provider.base import Role
-
     provider, _ = _make_provider()
     caps = provider.capabilities()
     assert Role.SOURCE in caps.roles
@@ -680,7 +662,7 @@ async def test_update_entry_paused_maps_to_current_state():
 
 @pytest.mark.asyncio
 async def test_update_entry_repeating_maps_to_viewed_hdd():
-    """REPEATING writes state=1/viewed=True (best approximation; reads back as COMPLETED)."""
+    """REPEATING writes state=1/viewed=True (approximation; reads back as COMPLETED)."""
     provider, mock_client = _make_provider()
 
     write = UpsertRecord(
@@ -698,7 +680,7 @@ async def test_update_entry_repeating_maps_to_viewed_hdd():
 
 @pytest.mark.asyncio
 async def test_update_entry_planning_maps_to_unknown_state():
-    """PLANNING writes state=0/viewed=False (best approximation; reads back as ACTIVE)."""
+    """PLANNING writes state=0/viewed=False (approximation; reads back as ACTIVE)."""
     provider, mock_client = _make_provider()
 
     write = UpsertRecord(
@@ -733,15 +715,15 @@ def test_backup_list_raises_not_implemented():
 
 @pytest.mark.asyncio
 async def test_get_entry_anime_info_none_uses_fallback():
-    """fetch_records() returns an entry with metadata title 'AID:{aid}' when get_anime_info returns None."""
+    """fetch_records() returns 'AID:{aid}' as metadata title when anime info is None."""
     provider, mock_client = _make_provider()
     mock_client.get_mylist_entry.return_value = _make_mylist_entry(aid=9999, viewdate=0)
     mock_client.get_anime_info.return_value = None
 
-    from anibridge.provider.base import RecordQuery
-
     result = await provider.fetch_records(RecordQuery(keys=("9999",)))
 
-    assert len(result.items) == 1, "Expected one record even when anime info is unavailable"
+    assert len(result.items) == 1, (
+        "Expected one record even when anime info is unavailable"
+    )
     record = result.items[0]
     assert record.metadata.get("title") == "AID:9999"

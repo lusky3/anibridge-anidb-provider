@@ -1,22 +1,42 @@
 """Tests for AniDB UDP response models and config."""
-import pytest
+
 import msgspec
+import pytest
+
 from anibridge.providers.anidb.config import AnidbProviderConfig
+from anibridge.providers.anidb.models import (
+    AnidbResponse,
+    AnimeInfo,
+    MylistEntry,
+    MylistStatus,
+    parse_response,
+)
 
 
 def test_config_requires_username():
     with pytest.raises((msgspec.ValidationError, TypeError)):
-        msgspec.convert({"password": "pass", "client": "c", "client_version": 1}, type=AnidbProviderConfig)
+        msgspec.convert(
+            {"password": "pass", "client": "c", "client_version": 1},
+            type=AnidbProviderConfig,
+        )
 
 
 def test_config_requires_password():
     with pytest.raises((msgspec.ValidationError, TypeError)):
-        msgspec.convert({"username": "user", "client": "c", "client_version": 1}, type=AnidbProviderConfig)
+        msgspec.convert(
+            {"username": "user", "client": "c", "client_version": 1},
+            type=AnidbProviderConfig,
+        )
 
 
 def test_config_defaults():
     cfg = msgspec.convert(
-        {"username": "user", "password": "pass", "client": "myclient", "client_version": 1},
+        {
+            "username": "user",
+            "password": "pass",
+            "client": "myclient",
+            "client_version": 1,
+        },
         type=AnidbProviderConfig,
     )
     assert cfg.username == "user"
@@ -30,21 +50,20 @@ def test_config_defaults():
 
 def test_config_with_encrypt():
     cfg = msgspec.convert(
-        {"username": "u", "password": "p", "client": "c", "client_version": 2, "encrypt": "apikey123"},
+        {
+            "username": "u",
+            "password": "p",
+            "client": "c",
+            "client_version": 2,
+            "encrypt": "apikey123",
+        },
         type=AnidbProviderConfig,
     )
     assert cfg.encrypt == "apikey123"
 
-from anibridge.providers.anidb.models import (
-    AnidbResponse,
-    AnimeInfo,
-    MylistEntry,
-    MylistStatus,
-    parse_response,
-)
-
 
 # --- parse_response ---
+
 
 def test_parse_response_200_login():
     resp = parse_response(b"200 s3ss10n LOGIN ACCEPTED\n")
@@ -71,6 +90,7 @@ def test_parse_response_empty_body():
 
 # --- MylistStatus ---
 
+
 def test_mylist_status_from_int_known():
     assert MylistStatus.from_int(0) == MylistStatus.UNKNOWN
     assert MylistStatus.from_int(1) == MylistStatus.HDD
@@ -84,6 +104,7 @@ def test_mylist_status_from_int_unknown_value():
 
 
 # --- MylistEntry ---
+
 
 def test_mylist_entry_from_response_viewed():
     line = b"221 42|0|0|1234|0|0|1|1700000000|||\n"
@@ -121,6 +142,7 @@ def test_mylist_entry_from_response_too_few_fields():
 
 
 # --- AnimeInfo ---
+
 
 def test_anime_info_from_response_romaji_title():
     line = b"243 1234|0|2023|TV Series|Cowboy Bebop|||26\n"

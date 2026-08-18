@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import time
 from typing import TYPE_CHECKING
 
 from anibridge.providers.anidb.models import (
-    AnimeInfo,
     AnidbResponse,
+    AnimeInfo,
     MylistEntry,
     parse_response,
 )
@@ -35,7 +36,7 @@ class _UdpProtocol(asyncio.DatagramProtocol):
         """Initialise with a queue to receive incoming packets."""
         self._queue = recv_queue
 
-    def datagram_received(self, data: bytes, addr: object) -> None:  # noqa: ARG002
+    def datagram_received(self, data: bytes, addr: object) -> None:
         """Route a received datagram to the receive queue."""
         self._queue.put_nowait(data)
 
@@ -110,10 +111,8 @@ class AnidbUdpClient:
     async def close(self) -> None:
         """Log out and close the UDP socket."""
         if self._authenticated and self._session:
-            try:
+            with contextlib.suppress(Exception):
                 await self._send_command(f"LOGOUT s={self._session}")
-            except Exception:  # noqa: BLE001
-                pass
         self._session = None
         self._authenticated = False
         if self._transport:
@@ -130,9 +129,7 @@ class AnidbUdpClient:
             MylistEntry if found, None if not in list (code 321).
         """
         await self._ensure_authenticated()
-        resp = await self._send_command(
-            f"MYLIST s={self._session}&aid={aid}&generic=1"
-        )
+        resp = await self._send_command(f"MYLIST s={self._session}&aid={aid}&generic=1")
         if resp.code == 321:
             return None
         if resp.code == 221:
@@ -247,7 +244,7 @@ class AnidbUdpClient:
         self._auth_time = time.monotonic()
         if self._encrypt_key:
             raw_key = self._encrypt_key + self._session
-            self._cipher_key = hashlib.md5(raw_key.encode()).digest()  # noqa: S324
+            self._cipher_key = hashlib.md5(raw_key.encode()).digest()
         self.log.debug("AniDB session established: %s", self._session)
 
     async def _ensure_authenticated(self) -> None:
@@ -303,8 +300,8 @@ class AnidbUdpClient:
         self._transport.sendto(data)
         try:
             raw = await asyncio.wait_for(self._recv_queue.get(), timeout=30.0)
-        except asyncio.TimeoutError as exc:
-            raise asyncio.TimeoutError(
+        except TimeoutError as exc:
+            raise TimeoutError(
                 f"No response from AniDB within 30 s for: {command[:40]!r}"
             ) from exc
         if self._cipher_key and not command.startswith("AUTH"):
@@ -316,6 +313,7 @@ def _aes128_ecb_encrypt(data: bytes, key: bytes) -> bytes:
     """Encrypt data with AES-128-ECB, padding to 16-byte boundary."""
     try:
         from Crypto.Cipher import AES  # noqa: PLC0415
+
         cipher = AES.new(key, AES.MODE_ECB)
     except ImportError:
         logging.getLogger(__name__).warning(
@@ -331,6 +329,7 @@ def _aes128_ecb_decrypt(data: bytes, key: bytes) -> bytes:
     """Decrypt AES-128-ECB data and strip zero padding."""
     try:
         from Crypto.Cipher import AES  # noqa: PLC0415
+
         cipher = AES.new(key, AES.MODE_ECB)
     except ImportError:
         return data
