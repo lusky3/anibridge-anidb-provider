@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Keeps pyproject.toml/uv.lock current, including the pinned
+  # anibridge-provider-base<0.2 upper bound as new pre-1.0 releases ship.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
