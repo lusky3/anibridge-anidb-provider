@@ -16,14 +16,12 @@ from anibridge.provider.base import (
     RecordQuery,
     Ref,
     Role,
-    ScanQuery,
     State,
     Status,
     SupportsMapping,
     SupportsNodeReads,
     SupportsRecordReads,
     SupportsRecordWrites,
-    SupportsScan,
     UpsertRecord,
     WriteError,
     WriteOp,
@@ -163,7 +161,8 @@ def test_provider_implements_required_mixins():
     assert isinstance(provider, SupportsNodeReads)
     assert isinstance(provider, SupportsRecordReads)
     assert isinstance(provider, SupportsRecordWrites)
-    assert isinstance(provider, SupportsScan)
+    # SupportsScan is intentionally absent: AniDB UDP has no bulk list export
+    assert not hasattr(provider, "scan")
 
 
 def test_provider_namespace_and_display_name():
@@ -562,16 +561,14 @@ async def test_resolve_match_has_full_confidence():
 
 
 # ---------------------------------------------------------------------------
-# scan() (backup_list equivalent)
+# scan() — not supported
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_scan_returns_empty_page():
-    """scan() returns an empty Page (AniDB UDP has no bulk export)."""
+def test_provider_has_no_scan_method():
+    """AniDB provider does not implement SupportsScan (no bulk UDP export)."""
     provider, _ = _make_provider()
-    result = await provider.scan(ScanQuery())
-    assert result.items == ()
+    assert not hasattr(provider, "scan")
 
 
 # ---------------------------------------------------------------------------
@@ -623,11 +620,12 @@ def test_capabilities_advertises_record_surface():
     assert _SURFACE in surfaces
 
 
-def test_capabilities_has_both_roles():
+def test_capabilities_has_target_role_only():
     provider, _ = _make_provider()
     caps = provider.capabilities()
-    assert Role.SOURCE in caps.roles
     assert Role.TARGET in caps.roles
+    # SOURCE requires scan() support; AniDB UDP has no bulk export
+    assert Role.SOURCE not in caps.roles
 
 
 def test_capabilities_record_spec_has_status_field():
@@ -694,18 +692,6 @@ async def test_update_entry_planning_maps_to_unknown_state():
     mock_client.add_or_update_mylist_entry.assert_awaited_once_with(
         aid=2002, state=0, viewed=False
     )
-
-
-# ---------------------------------------------------------------------------
-# backup_list (C2)
-# ---------------------------------------------------------------------------
-
-
-def test_backup_list_raises_not_implemented():
-    """backup_list() raises NotImplementedError — AniDB UDP has no bulk export."""
-    provider, _ = _make_provider()
-    with pytest.raises(NotImplementedError):
-        provider.backup_list()
 
 
 # ---------------------------------------------------------------------------

@@ -48,15 +48,12 @@ from anibridge.provider.base import (
     RecordWrite,
     Ref,
     Role,
-    ScanItem,
-    ScanQuery,
     State,
     Status,
     SupportsMapping,
     SupportsNodeReads,
     SupportsRecordReads,
     SupportsRecordWrites,
-    SupportsScan,
     Titles,
     UpsertRecord,
     WriteError,
@@ -165,7 +162,6 @@ class AnidbProvider(
     SupportsNodeReads,
     SupportsRecordReads,
     SupportsRecordWrites,
-    SupportsScan,
 ):
     """AniBridge provider for the AniDB anime database.
 
@@ -235,7 +231,7 @@ class AnidbProvider(
     def capabilities(self) -> Capabilities:
         """Advertise AniDB provider capabilities."""
         return Capabilities(
-            roles=frozenset({Role.SOURCE, Role.TARGET}),
+            roles=frozenset({Role.TARGET}),
             facets=frozenset({FacetName.TITLES, FacetName.IDS}),
             nodes=(
                 NodeSpec(
@@ -508,24 +504,6 @@ class AnidbProvider(
         )
 
     # ------------------------------------------------------------------
-    # SupportsScan
-    # ------------------------------------------------------------------
-
-    async def scan(self, query: ScanQuery) -> Page[ScanItem]:
-        """Scan the AniDB MyList.
-
-        Note: AniDB UDP API does not support bulk list export, so this
-        always returns an empty page.
-
-        Args:
-            query: ScanQuery (unused).
-
-        Returns:
-            Empty Page.
-        """
-        return Page(items=())
-
-    # ------------------------------------------------------------------
     # Unimplemented optional operations
     # ------------------------------------------------------------------
 
@@ -533,7 +511,6 @@ class AnidbProvider(
         """Not implemented — AniDB has no bulk export via UDP.
 
         Raises:
-            NotImplementedError: Always.  Use ``scan()`` for partial iteration
-                support when it becomes available.
+            NotImplementedError: Always.
         """
         raise NotImplementedError("backup_list is not supported by the AniDB UDP API.")
