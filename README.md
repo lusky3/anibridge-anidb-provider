@@ -2,7 +2,7 @@
 
 AniDB provider for the [AniBridge](https://github.com/anibridge) project. Implements the `anibridge-provider-base` interface using the AniDB UDP API to sync watch history, list status, and anime metadata.
 
-[![CI](https://github.com/anibridge/anibridge-anidb-provider/actions/workflows/ci.yml/badge.svg)](https://github.com/anibridge/anibridge-anidb-provider/actions/workflows/ci.yml)
+[![CI](https://github.com/lusky3/anibridge-anidb-provider/actions/workflows/ci.yml/badge.svg)](https://github.com/lusky3/anibridge-anidb-provider/actions/workflows/ci.yml)
 
 ## Installation
 
@@ -15,7 +15,7 @@ pip install anibridge-anidb-provider
 From source:
 
 ```bash
-pip install git+https://github.com/anibridge/anibridge-anidb-provider.git
+pip install git+https://github.com/lusky3/anibridge-anidb-provider.git
 ```
 
 ## Configuration

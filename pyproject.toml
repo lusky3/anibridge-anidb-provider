@@ -25,6 +25,11 @@ dependencies = [
     "pycryptodome>=3.20",
 ]
 
+[project.urls]
+Homepage = "https://github.com/lusky3/anibridge-anidb-provider"
+Repository = "https://github.com/lusky3/anibridge-anidb-provider"
+Issues = "https://github.com/lusky3/anibridge-anidb-provider/issues"
+
 [tool.ruff]
 indent-width = 4
 line-length = 88
