@@ -7,7 +7,8 @@ import contextlib
 import hashlib
 import logging
 import time
-from typing import TYPE_CHECKING
+
+from Crypto.Cipher import AES
 
 from anibridge.providers.anidb.models import (
     AnidbResponse,
@@ -15,9 +16,6 @@ from anibridge.providers.anidb.models import (
     MylistEntry,
     parse_response,
 )
-
-if TYPE_CHECKING:
-    pass
 
 _ANIDB_HOST = "api.anidb.net"
 _ANIDB_PORT = 9000
@@ -94,6 +92,7 @@ class AnidbUdpClient:
         self._recv_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._anime_cache: dict[int, AnimeInfo] = {}
         self._auth_lock: asyncio.Lock = asyncio.Lock()
+        self._send_lock: asyncio.Lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -219,11 +218,15 @@ class AnidbUdpClient:
     # ------------------------------------------------------------------
 
     async def _authenticate(self) -> None:
-        """Send AUTH command and store session token.
+        """Negotiate encryption (if configured), then AUTH and store the session.
 
         Raises:
-            AnidbAuthError: If AniDB returns a non-200/201 code.
+            AnidbAuthError: If ENCRYPT or AUTH is rejected by AniDB.
         """
+        self._cipher_key = None
+        if self._encrypt_key:
+            await self._negotiate_encryption()
+
         cmd = (
             f"AUTH user={self._username}&pass={self._password}"
             f"&protover={_PROTO_VER}&client={self._client}"
@@ -231,9 +234,7 @@ class AnidbUdpClient:
         )
         if self._nat:
             cmd += "&nat=1"
-        if self._encrypt_key:
-            cmd += f"&encrypt={self._username}"
-        raw = await self._send_raw(cmd)
+        raw = await self._send_rate_limited(cmd)
         parsed = parse_response(raw)
         if parsed.code not in {200, 201}:
             raise AnidbAuthError(
@@ -242,10 +243,29 @@ class AnidbUdpClient:
         self._session = parsed.body.split()[0]
         self._authenticated = True
         self._auth_time = time.monotonic()
-        if self._encrypt_key:
-            raw_key = self._encrypt_key + self._session
-            self._cipher_key = hashlib.md5(raw_key.encode()).digest()
         self.log.debug("AniDB session established: %s", self._session)
+
+    async def _negotiate_encryption(self) -> None:
+        """Send ENCRYPT and derive the AES-128-ECB session key from its salt.
+
+        No-op if no encryption API key was configured.
+
+        Raises:
+            AnidbAuthError: If AniDB rejects the ENCRYPT request (non-209 code).
+        """
+        encrypt_key = self._encrypt_key
+        if encrypt_key is None:
+            return
+        cmd = f"ENCRYPT user={self._username}&type=1"
+        raw = await self._send_rate_limited(cmd)
+        parsed = parse_response(raw)
+        if parsed.code != 209:
+            raise AnidbAuthError(
+                f"AniDB ENCRYPT failed (code {parsed.code}): {parsed.body}"
+            )
+        salt = parsed.body.split()[0]
+        self._cipher_key = hashlib.md5(encrypt_key.encode() + salt.encode()).digest()
+        self.log.debug("AniDB UDP encryption negotiated")
 
     async def _ensure_authenticated(self) -> None:
         """Re-authenticate if the session has expired or was never started."""
@@ -268,13 +288,31 @@ class AnidbUdpClient:
         Returns:
             Parsed AnidbResponse.
         """
-        now = time.monotonic()
-        wait = self._min_interval - (now - self._last_request_time)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        raw = await self._send_raw(command)
-        self._last_request_time = time.monotonic()
+        raw = await self._send_rate_limited(command)
         return parse_response(raw)
+
+    async def _send_rate_limited(self, command: str) -> bytes:
+        """Serialize and rate-limit sends so concurrent callers can't flood.
+
+        AniDB enforces a hard minimum interval between UDP requests; without
+        serializing here, two commands issued concurrently (e.g. via
+        ``asyncio.gather``) would both observe the same last-request time and
+        send back-to-back, violating the limit.
+
+        Args:
+            command: Full AniDB UDP command string.
+
+        Returns:
+            Raw (decrypted, if applicable) response bytes.
+        """
+        async with self._send_lock:
+            now = time.monotonic()
+            wait = self._min_interval - (now - self._last_request_time)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            raw = await self._send_raw(command)
+            self._last_request_time = time.monotonic()
+            return raw
 
     async def _send_raw(self, command: str) -> bytes:
         """Send a raw command string over UDP and wait for a response.
@@ -295,7 +333,7 @@ class AnidbUdpClient:
         if self._transport is None:
             raise RuntimeError("UDP transport is not open; call open() first")
         data = command.encode("utf-8")
-        if self._cipher_key and not command.startswith("AUTH"):
+        if self._cipher_key:
             data = _aes128_ecb_encrypt(data, self._cipher_key)
         self._transport.sendto(data)
         try:
@@ -304,33 +342,38 @@ class AnidbUdpClient:
             raise TimeoutError(
                 f"No response from AniDB within 30 s for: {command[:40]!r}"
             ) from exc
-        if self._cipher_key and not command.startswith("AUTH"):
+        if self._cipher_key:
             raw = _aes128_ecb_decrypt(raw, self._cipher_key)
         return raw
 
 
-def _aes128_ecb_encrypt(data: bytes, key: bytes) -> bytes:
-    """Encrypt data with AES-128-ECB, padding to 16-byte boundary."""
-    try:
-        from Crypto.Cipher import AES  # noqa: PLC0415
+def _pkcs7_pad(data: bytes, block_size: int = 16) -> bytes:
+    """Pad data to a block boundary using PKCS#7."""
+    pad_len = block_size - (len(data) % block_size)
+    return data + bytes([pad_len]) * pad_len
 
-        cipher = AES.new(key, AES.MODE_ECB)
-    except ImportError:
-        logging.getLogger(__name__).warning(
-            "pycryptodome not installed; UDP encryption disabled"
-        )
+
+def _pkcs7_unpad(data: bytes, block_size: int = 16) -> bytes:
+    """Strip PKCS#7 padding, returning the input unchanged if it looks invalid."""
+    if not data:
         return data
-    pad_len = 16 - (len(data) % 16)
-    data = data + bytes(pad_len)
-    return cipher.encrypt(data)
+    pad_len = data[-1]
+    if (
+        pad_len < 1
+        or pad_len > block_size
+        or data[-pad_len:] != bytes([pad_len]) * pad_len
+    ):
+        return data
+    return data[:-pad_len]
+
+
+def _aes128_ecb_encrypt(data: bytes, key: bytes) -> bytes:
+    """Encrypt data with AES-128-ECB, PKCS#7-padded to a 16-byte boundary."""
+    cipher = AES.new(key, AES.MODE_ECB)
+    return cipher.encrypt(_pkcs7_pad(data))
 
 
 def _aes128_ecb_decrypt(data: bytes, key: bytes) -> bytes:
-    """Decrypt AES-128-ECB data and strip zero padding."""
-    try:
-        from Crypto.Cipher import AES  # noqa: PLC0415
-
-        cipher = AES.new(key, AES.MODE_ECB)
-    except ImportError:
-        return data
-    return cipher.decrypt(data).rstrip(b"\x00")
+    """Decrypt AES-128-ECB data and strip PKCS#7 padding."""
+    cipher = AES.new(key, AES.MODE_ECB)
+    return _pkcs7_unpad(cipher.decrypt(data))

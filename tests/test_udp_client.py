@@ -1,8 +1,8 @@
 """Tests for the AniDB async UDP client."""
 
 import asyncio
+import hashlib
 import logging
-import sys
 import time
 import unittest.mock
 
@@ -302,8 +302,13 @@ async def test_authenticate_with_nat_flag(mock_udp_responses):
 
 @pytest.mark.asyncio
 async def test_authenticate_with_encrypt_key(mock_udp_responses):
-    """AUTH command includes encrypt param and sets cipher key when encrypt= set."""
-    mock_udp_responses.extend([b"200 sess LOGIN ACCEPTED\n"])
+    """When encrypt= is set, ENCRYPT is negotiated before AUTH is sent."""
+    mock_udp_responses.extend(
+        [
+            b"209 abcd1234 SALT\n",
+            b"200 sess LOGIN ACCEPTED\n",
+        ]
+    )
     client = AnidbUdpClient(
         username="user",
         password="pass",
@@ -315,9 +320,57 @@ async def test_authenticate_with_encrypt_key(mock_udp_responses):
     client._min_interval = 0
     await client._authenticate()
     assert client._authenticated is True
-    # cipher key should be set (md5 of apikey+session)
-    assert client._cipher_key is not None
-    assert len(client._cipher_key) == 16  # 128-bit MD5 digest
+    # cipher key is md5(apikey + salt-from-ENCRYPT-reply), not apikey+session
+    expected_key = hashlib.md5(b"myapikey" + b"abcd1234").digest()
+    assert client._cipher_key == expected_key
+
+
+@pytest.mark.asyncio
+async def test_authenticate_encrypt_negotiation_failure_raises(mock_udp_responses):
+    """A non-209 ENCRYPT reply raises AnidbAuthError before AUTH is attempted."""
+    mock_udp_responses.extend([b"394 NO SUCH ENCRYPTION TYPE\n"])
+    client = AnidbUdpClient(
+        username="user",
+        password="pass",
+        client="testclient",
+        client_version=1,
+        encrypt="myapikey",
+        logger=None,
+    )
+    client._min_interval = 0
+    with pytest.raises(AnidbAuthError, match="ENCRYPT failed"):
+        await client._authenticate()
+    assert client._authenticated is False
+    assert not mock_udp_responses  # AUTH was never sent
+
+
+@pytest.mark.asyncio
+async def test_authenticate_without_encrypt_key_sends_no_encrypt_command(
+    mock_udp_responses,
+):
+    """Without encrypt=, only AUTH is sent and no cipher key is derived."""
+    mock_udp_responses.extend([b"200 sess LOGIN ACCEPTED\n"])
+    client = _make_client()
+    await client._authenticate()
+    assert client._cipher_key is None
+    assert not mock_udp_responses
+
+
+@pytest.mark.asyncio
+async def test_send_raw_encrypts_once_cipher_key_is_set():
+    """_send_raw encrypts outgoing data, including AUTH-prefixed commands."""
+    client = _make_client()
+    client._cipher_key = hashlib.md5(b"key").digest()
+    client._transport = unittest.mock.MagicMock()
+    await client._recv_queue.put(
+        _udp_client_mod._aes128_ecb_encrypt(b"200 ok\n", client._cipher_key)
+    )
+
+    raw = await client._send_raw("AUTH user=x")
+
+    assert raw == b"200 ok\n"
+    sent_data = client._transport.sendto.call_args[0][0]
+    assert sent_data != b"AUTH user=x"  # was encrypted, not sent in the clear
 
 
 @pytest.mark.asyncio
@@ -384,6 +437,35 @@ async def test_send_command_respects_rate_limit(mock_udp_responses):
     assert result is not None
 
 
+@pytest.mark.asyncio
+async def test_send_rate_limited_serializes_concurrent_calls():
+    """Two concurrent commands don't both bypass the min_interval spacing.
+
+    Regression test: _send_command/_send_rate_limited used to check-then-act
+    on _last_request_time without a lock, so two coroutines racing through
+    asyncio.gather (as fetch_records does for mylist + anime info) would both
+    compute the same wait and fire back-to-back, violating AniDB's hard
+    rate limit.
+    """
+    client = _make_client()
+    client._min_interval = 0.05
+    call_times: list[float] = []
+
+    async def fake_send_raw(command: str) -> bytes:
+        call_times.append(time.monotonic())
+        return b"200 ok\n"
+
+    client._send_raw = fake_send_raw  # type: ignore[method-assign]
+
+    await asyncio.gather(
+        client._send_rate_limited("CMD1"),
+        client._send_rate_limited("CMD2"),
+    )
+
+    assert len(call_times) == 2
+    assert call_times[1] - call_times[0] >= client._min_interval
+
+
 def test_udp_protocol_datagram_received():
     """_UdpProtocol.datagram_received puts data into the queue."""
     queue: asyncio.Queue[bytes] = asyncio.Queue()
@@ -409,46 +491,25 @@ async def test_send_raw_raises_without_transport():
         await client._send_raw("TEST command")
 
 
-def test_aes_encrypt_import_error_fallback(monkeypatch):
-    """_aes128_ecb_encrypt returns data unchanged when pycryptodome is missing."""
-    original_modules = sys.modules.copy()
-    # Remove Crypto from sys.modules to force ImportError path
-    for key in list(sys.modules.keys()):
-        if key.startswith("Crypto"):
-            sys.modules[key] = None  # type: ignore[assignment]
-
-    try:
-        data = b"some data to encrypt"
-        enc_key = b"\x00" * 16
-        result = _udp_client_mod._aes128_ecb_encrypt(data, enc_key)
-        # Without pycryptodome, returns original data unchanged
-        assert result == data
-    finally:
-        # Restore modules
-        for key in list(sys.modules.keys()):
-            if key.startswith("Crypto"):
-                if key in original_modules:
-                    sys.modules[key] = original_modules[key]
-                else:
-                    del sys.modules[key]
+def test_aes_encrypt_decrypt_roundtrip():
+    """AES-128-ECB encrypt/decrypt with PKCS#7 padding round-trips exactly."""
+    key = hashlib.md5(b"apikey" + b"somesalt").digest()
+    for data in (b"", b"short", b"exactly16bytes!!", b"a bit longer than one block"):
+        encrypted = _udp_client_mod._aes128_ecb_encrypt(data, key)
+        assert len(encrypted) % 16 == 0
+        assert _udp_client_mod._aes128_ecb_decrypt(encrypted, key) == data
 
 
-def test_aes_decrypt_import_error_fallback():
-    """_aes128_ecb_decrypt returns data unchanged when pycryptodome is missing."""
-    original_modules = sys.modules.copy()
-    for key in list(sys.modules.keys()):
-        if key.startswith("Crypto"):
-            sys.modules[key] = None  # type: ignore[assignment]
+def test_pkcs7_pad_unpad_roundtrip():
+    """_pkcs7_pad/_pkcs7_unpad round-trip for arbitrary lengths, including empty."""
+    for length in range(40):
+        data = bytes(i % 256 for i in range(length))
+        padded = _udp_client_mod._pkcs7_pad(data)
+        assert len(padded) % 16 == 0
+        assert _udp_client_mod._pkcs7_unpad(padded) == data
 
-    try:
-        data = b"some encrypted data"
-        dec_key = b"\x00" * 16
-        result = _udp_client_mod._aes128_ecb_decrypt(data, dec_key)
-        assert result == data
-    finally:
-        for key in list(sys.modules.keys()):
-            if key.startswith("Crypto"):
-                if key in original_modules:
-                    sys.modules[key] = original_modules[key]
-                else:
-                    del sys.modules[key]
+
+def test_pkcs7_unpad_returns_input_unchanged_when_invalid():
+    """_pkcs7_unpad is defensive: malformed padding is returned as-is."""
+    garbage = b"\x00" * 16  # last byte 0 is not a valid PKCS#7 pad length
+    assert _udp_client_mod._pkcs7_unpad(garbage) == garbage
