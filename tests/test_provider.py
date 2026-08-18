@@ -653,3 +653,95 @@ def test_capabilities_record_spec_has_status_field():
     caps = provider.capabilities()
     mylist_spec = next(s for s in caps.records if s.surface == _SURFACE)
     assert RecordField.STATUS in mylist_spec.fields
+
+
+# ---------------------------------------------------------------------------
+# Lossy status write mappings (C1 — deliberate approximations)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_entry_paused_maps_to_current_state():
+    """PAUSED writes state=1/viewed=False (best approximation; reads back as ACTIVE)."""
+    provider, mock_client = _make_provider()
+
+    write = UpsertRecord(
+        ref=Ref.anchor("2000"),
+        surface=_SURFACE,
+        set={RecordField.STATUS: State(native="paused", status=Status.PAUSED)},
+    )
+    results = await provider.write_records([write])
+
+    assert results[0].ok is True
+    mock_client.add_or_update_mylist_entry.assert_awaited_once_with(
+        aid=2000, state=1, viewed=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_entry_repeating_maps_to_viewed_hdd():
+    """REPEATING writes state=1/viewed=True (best approximation; reads back as COMPLETED)."""
+    provider, mock_client = _make_provider()
+
+    write = UpsertRecord(
+        ref=Ref.anchor("2001"),
+        surface=_SURFACE,
+        set={RecordField.STATUS: State(native="repeating", status=Status.REPEATING)},
+    )
+    results = await provider.write_records([write])
+
+    assert results[0].ok is True
+    mock_client.add_or_update_mylist_entry.assert_awaited_once_with(
+        aid=2001, state=1, viewed=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_entry_planning_maps_to_unknown_state():
+    """PLANNING writes state=0/viewed=False (best approximation; reads back as ACTIVE)."""
+    provider, mock_client = _make_provider()
+
+    write = UpsertRecord(
+        ref=Ref.anchor("2002"),
+        surface=_SURFACE,
+        set={RecordField.STATUS: State(native="planned", status=Status.PLANNED)},
+    )
+    results = await provider.write_records([write])
+
+    assert results[0].ok is True
+    mock_client.add_or_update_mylist_entry.assert_awaited_once_with(
+        aid=2002, state=0, viewed=False
+    )
+
+
+# ---------------------------------------------------------------------------
+# backup_list (C2)
+# ---------------------------------------------------------------------------
+
+
+def test_backup_list_raises_not_implemented():
+    """backup_list() raises NotImplementedError — AniDB UDP has no bulk export."""
+    provider, _ = _make_provider()
+    with pytest.raises(NotImplementedError):
+        provider.backup_list()
+
+
+# ---------------------------------------------------------------------------
+# get_entry with anime_info=None fallback (C2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_entry_anime_info_none_uses_fallback():
+    """fetch_records() returns an entry with metadata title 'AID:{aid}' when get_anime_info returns None."""
+    provider, mock_client = _make_provider()
+    mock_client.get_mylist_entry.return_value = _make_mylist_entry(aid=9999, viewdate=0)
+    mock_client.get_anime_info.return_value = None
+
+    from anibridge.provider.base import RecordQuery
+
+    result = await provider.fetch_records(RecordQuery(keys=("9999",)))
+
+    assert len(result.items) == 1, "Expected one record even when anime info is unavailable"
+    record = result.items[0]
+    assert record.metadata.get("title") == "AID:9999"

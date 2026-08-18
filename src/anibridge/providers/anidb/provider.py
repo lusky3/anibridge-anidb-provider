@@ -1,4 +1,21 @@
-"""AniDB provider implementation for AniBridge."""
+"""AniDB provider implementation for AniBridge.
+
+Known lossiness
+---------------
+The AniDB UDP API's MyList only supports four native states (UNKNOWN=0, HDD=1,
+CD=2, DELETED=3) plus a ``viewdate`` timestamp.  AniBridge statuses that have
+no direct AniDB equivalent are approximated on write as follows:
+
+    PAUSED    → state=1, viewed=False  (reads back as ACTIVE / "currently watching")
+    REPEATING → state=1, viewed=True   (reads back as COMPLETED)
+    PLANNING  → state=0, viewed=False  (reads back as ACTIVE / UNKNOWN)
+
+These mappings are the best available approximations.  A status written as one
+of the above values will **not** round-trip cleanly — a subsequent read will
+return the approximated value instead of the original.  This is intentional and
+documented rather than treated as an error, because returning a write error
+would break sync pipelines that legitimately set these statuses.
+"""
 
 from __future__ import annotations
 
@@ -83,6 +100,11 @@ def _status_to_mylist(status: Status | None) -> tuple[int, bool]:
 
     Returns:
         Tuple of (state_int, viewed_bool) suitable for MYLISTADD.
+
+    Lossy mappings (no exact AniDB equivalent — see module docstring):
+        PAUSED    → (1, False)  — stored as HDD/unwatched; reads back as ACTIVE
+        REPEATING → (1, True)   — stored as HDD/watched;  reads back as COMPLETED
+        PLANNING  → (0, False)  — stored as UNKNOWN;      reads back as ACTIVE
     """
     if status in (Status.COMPLETED, Status.REPEATING):
         return (1, True)
@@ -99,13 +121,21 @@ def _build_record(
     entry: MylistEntry,
     anime: AnimeInfo | None,
 ) -> Record:
-    """Build a normalized Record from a MylistEntry and optional AnimeInfo."""
+    """Build a normalized Record from a MylistEntry and optional AnimeInfo.
+
+    The record title is derived from ``anime.title`` when available, and falls
+    back to ``AID:{key}`` when AnimeInfo could not be fetched.  The title is
+    stored in ``metadata["title"]`` so callers can surface it without a separate
+    node fetch.
+    """
     status = _mylist_to_status(entry)
+    title = anime.title if anime else f"AID:{key}"
     return Record(
         ref=Ref.anchor(key),
         surface=_SURFACE,
         key=str(entry.lid),
         values={RecordField.STATUS: State(native=status.value, status=status)},
+        metadata={"title": title},
     )
 
 
@@ -316,7 +346,9 @@ class AnidbProvider(
     async def _fetch_single_record(self, key: str) -> Record | None:
         """Fetch one MyList record by AID key, returning None if not in list.
 
-        Fetches mylist entry and anime info concurrently.
+        Fetches mylist entry and anime info concurrently.  The anime title is
+        stored in the record's metadata so callers can display it without a
+        separate node fetch.
 
         Args:
             key: AID string (e.g. "1234").
@@ -329,7 +361,7 @@ class AnidbProvider(
         except ValueError:
             return None
 
-        mylist_entry, _anime = await asyncio.gather(
+        mylist_entry, anime = await asyncio.gather(
             self._client.get_mylist_entry(aid=aid),
             self._client.get_anime_info(aid=aid),
         )
@@ -337,7 +369,7 @@ class AnidbProvider(
         if mylist_entry is None:
             return None
 
-        return _build_record(key, mylist_entry, _anime)
+        return _build_record(key, mylist_entry, anime)
 
     # ------------------------------------------------------------------
     # SupportsRecordWrites
@@ -497,3 +529,18 @@ class AnidbProvider(
             Empty Page.
         """
         return Page(items=())
+
+    # ------------------------------------------------------------------
+    # Unimplemented optional operations
+    # ------------------------------------------------------------------
+
+    def backup_list(self) -> None:
+        """Not implemented — AniDB has no bulk export via UDP.
+
+        Raises:
+            NotImplementedError: Always.  Use ``scan()`` for partial iteration
+                support when it becomes available.
+        """
+        raise NotImplementedError(
+            "backup_list is not supported by the AniDB UDP API."
+        )
