@@ -119,20 +119,38 @@ class AnidbUdpClient:
             self._transport = None
 
     async def get_mylist_entry(self, *, aid: int) -> MylistEntry | None:
-        """Fetch the MyList entry for the given AID (generic file).
+        """Fetch the MyList entry for the given AID.
+
+        Note: ``generic`` is a MYLISTADD-only parameter -- the UDP API's MYLIST
+        (read) command has no such option, so this queries by aid alone. If
+        the account's MyList holds files for this anime from more than one
+        release group, AniDB replies 312 MULTIPLE MYLIST ENTRIES instead of a
+        single 221 -- an aggregate summary with no lid and no viewdate
+        timestamp, which can't be turned into a MylistEntry without either
+        fabricating a lid (unsafe: it would be handed to MYLISTDEL) or
+        guessing a status. That case is treated as unresolvable rather than
+        silently equated with "not in list".
 
         Args:
             aid: AniDB anime ID.
 
         Returns:
-            MylistEntry if found, None if not in list (code 321).
+            MylistEntry if found, None if not in list (321) or unresolvable (312).
         """
         await self._ensure_authenticated()
-        resp = await self._send_command(f"MYLIST s={self._session}&aid={aid}&generic=1")
+        resp = await self._send_command(f"MYLIST s={self._session}&aid={aid}")
         if resp.code == 321:
             return None
         if resp.code == 221:
             return MylistEntry.from_response(resp)
+        if resp.code == 312:
+            self.log.warning(
+                "AniDB MyList has entries from multiple groups for aid %d; "
+                "cannot resolve a single entry: %s",
+                aid,
+                resp.body,
+            )
+            return None
         self.log.warning("Unexpected MYLIST code %d: %s", resp.code, resp.body)
         return None
 

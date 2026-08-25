@@ -72,6 +72,7 @@ docstring for the full rationale.
 - **Rate limiting**: AniDB enforces a hard limit of one request per two seconds for logged-in sessions. The `rate_limit` config key defaults to 0.5 req/s. Exceeding 1.0 req/s will result in a temporary ban.
 - **No episode progress**: The AniDB UDP API does not return per-episode progress counters. Episode-level sync is not supported.
 - **No backup_list**: The `backup_list` operation is not implemented — AniDB has no bulk export via UDP.
+- **Multi-group MyList entries aren't read**: If your MyList holds files for an anime from more than one release group, AniDB's UDP API returns an aggregate summary with no `lid` and no watch timestamp instead of a single entry. This provider can't safely turn that into a status read (or risk deleting the wrong entry on write), so such anime are reported as not-in-list rather than guessed at.
 
 ## Development
 
