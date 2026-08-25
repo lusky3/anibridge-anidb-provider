@@ -99,6 +99,28 @@ async def test_get_mylist_entry_returns_none_on_unexpected_code(mock_udp_respons
 
 
 @pytest.mark.asyncio
+async def test_get_mylist_entry_returns_none_on_multiple_entries(
+    mock_udp_responses, caplog
+):
+    """312 (files from >1 group) is unresolvable, not "not in list".
+
+    It has no lid and no viewdate, so it can't be turned into a MylistEntry.
+    """
+    mock_udp_responses.extend(
+        [
+            b"200 sess LOGIN ACCEPTED\n",
+            b"312 Some Anime|26||1-26|1-13|14-26||GroupA|1-13|GroupB|14-26\n",
+        ]
+    )
+    client = _make_client()
+    await client._authenticate()
+    with caplog.at_level(logging.WARNING):
+        result = await client.get_mylist_entry(aid=1234)
+    assert result is None
+    assert "multiple groups" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_add_or_update_returns_true_on_210(mock_udp_responses):
     mock_udp_responses.extend(
         [
